@@ -1,7 +1,8 @@
 import requests
 import base64
 import re
-import sys
+import json
+import urllib.parse
 
 # 这是一个调试用的 URL 列表
 URLS = [
@@ -15,92 +16,172 @@ URLS = [
     "https://raw.githubusercontent.com/crossxx-labs/free-proxy/main/clash/vmess.yml"
 ]
 
+# 关键词映射表：把关键词映射到Emoji和国家代码
+KEYWORD_MAP = {
+    'HK': ['hk', 'hongkong', 'hong kong', '香', '港'],
+    'JP': ['jp', 'japan', 'tokyo', 'osaka', '日'],
+    'US': ['us', 'united states', 'america', '美', 'los angeles'],
+    'SG': ['sg', 'singapore', '新', '狮城'],
+    'TW': ['tw', 'taiwan', 'taipei', '台'],
+    'KR': ['kr', 'korea', 'seoul', '韩'],
+    'DE': ['de', 'germany', 'frankfurt', '德'],
+    'GB': ['uk', 'gb', 'united kingdom', 'london', '英'],
+    'RU': ['ru', 'russia', 'moscow', '俄'],
+    'FR': ['fr', 'france', 'paris', '法'],
+    'CA': ['ca', 'canada', '加'],
+}
+
+FLAG_MAP = {
+    'HK': '🇭🇰', 'JP': '🇯🇵', 'US': '🇺🇸', 'SG': '🇸🇬', 'TW': '🇹🇼',
+    'KR': '🇰🇷', 'DE': '🇩🇪', 'GB': '🇬🇧', 'RU': '🇷🇺', 'FR': '🇫🇷', 'CA': '🇨',
+    'UNKNOWN': '🏳️'
+}
+
 def get_content(url):
     try:
-        # flush=True 强制立即输出日志，防止在 Actions 里看不到
-        print(f"[-] 正在下载: {url}...", flush=True)
-        
-        # timeout=10: 如果10秒没连上，直接报错，不再等待
-        # stream=True: 防止下载几百MB的大文件把内存撑爆
-        resp = requests.get(url, timeout=10, stream=True)
-        
-        if resp.status_code != 200:
-            print(f"    [!] 下载失败，状态码: {resp.status_code}", flush=True)
-            return ""
-
-        # 限制下载大小，超过 5MB 的文件直接丢弃，防止卡死
-        content = ""
-        size_limit = 5 * 1024 * 1024 # 5MB
-        downloaded = 0
-        
-        for chunk in resp.iter_content(chunk_size=8192):
-            if chunk:
-                downloaded += len(chunk)
-                if downloaded > size_limit:
-                    print(f"    [!] 文件过大 (>5MB)，跳过", flush=True)
-                    return ""
-                content += chunk.decode('utf-8', errors='ignore')
-                
-        print(f"    [+] 下载成功，长度: {len(content)} 字符", flush=True)
-        return content
-
-    except requests.exceptions.Timeout:
-        print(f"    [!] 超时: 该链接响应太慢，已跳过", flush=True)
+        print(f"[-] 下载中: {url}...", flush=True)
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            return resp.text
         return ""
     except Exception as e:
-        print(f"    [!] 发生异常: {str(e)}", flush=True)
+        print(f"    [!] 下载异常: {e}", flush=True)
         return ""
 
-def safe_base64_decode(s):
-    s = s.strip().replace('\n', '').replace('\r', '').replace(' ', '')
-    if '%' in s:
-        try:
-            from urllib.parse import unquote
-            s = unquote(s)
-        except: pass
-    missing_padding = len(s) % 4
-    if missing_padding:
-        s += '=' * (4 - missing_padding)
+def identify_country(text):
+    """根据文本内容(名字或地址)猜测国家"""
+    text = text.lower()
+    for code, keywords in KEYWORD_MAP.items():
+        for kw in keywords:
+            if kw in text:
+                return code
+    return 'UNKNOWN'
+
+def rename_vmess(link):
+    """处理 VMess 协议的重命名 (Base64 -> JSON -> Modify -> Base64)"""
     try:
-        return base64.b64decode(s).decode('utf-8', errors='ignore')
+        # 去掉 vmess:// 前缀
+        b64_str = link[8:]
+        # 解码
+        missing_padding = len(b64_str) % 4
+        if missing_padding: b64_str += '=' * (4 - missing_padding)
+        json_str = base64.b64decode(b64_str).decode('utf-8', errors='ignore')
+        
+        # 解析 JSON
+        config = json.loads(json_str)
+        
+        # 获取原始名字和地址
+        original_ps = config.get('ps', '')
+        address = config.get('add', '')
+        
+        # 识别国家
+        country = identify_country(original_ps)
+        if country == 'UNKNOWN':
+            country = identify_country(address) # 如果名字里没有，就查地址
+            
+        flag = FLAG_MAP.get(country, '🏳️')
+        
+        # 生成新名字： "🇭🇰 HK 01 | 原始名" 这样的格式
+        # 简单清理一下原始名字，去掉太长的杂乱字符
+        clean_ps = original_ps[:20] 
+        new_ps = f"{flag} {country} {clean_ps}"
+        
+        # 更新 JSON
+        config['ps'] = new_ps
+        
+        # 重新编码
+        new_json = json.dumps(config, ensure_ascii=False)
+        new_b64 = base64.b64encode(new_json.encode('utf-8')).decode('utf-8')
+        return f"vmess://{new_b64}"
     except:
-        return ""
+        return link # 如果出错，返回原链接
+
+def rename_url_struct(link):
+    """处理 VLESS/Trojan/SS 等 URL 结构 (scheme://uuid@host:port#name)"""
+    try:
+        # 解析 URL
+        parsed = urllib.parse.urlparse(link)
+        
+        # 获取原始名字 (URL Fragment)
+        original_name = urllib.parse.unquote(parsed.fragment)
+        host = parsed.hostname or ""
+        
+        # 识别
+        country = identify_country(original_name)
+        if country == 'UNKNOWN':
+            country = identify_country(host)
+            
+        flag = FLAG_MAP.get(country, '🏳️')
+        
+        # 生成新名字
+        new_name = f"{flag} {country} {original_name[:15]}"
+        
+        # 替换 Fragment
+        new_parsed = parsed._replace(fragment=urllib.parse.quote(new_name))
+        return urllib.parse.urlunparse(new_parsed)
+    except:
+        return link
+
+def process_nodes(content):
+    """提取并处理所有节点"""
+    processed_nodes = set()
+    
+    # 提取所有链接
+    raw_links = re.findall(r'(vmess|vless|ss|trojan|hysteria2?)://[a-zA-Z0-9\-\._~%!$&\'()*+,;=:@/?#]+', content)
+    
+    for link in raw_links:
+        new_link = link
+        if link.startswith("vmess://"):
+            new_link = rename_vmess(link)
+        else:
+            new_link = rename_url_struct(link)
+        
+        processed_nodes.add(new_link)
+
+    # 同时也尝试解码 Base64 的订阅内容
+    try:
+        # 简单的 Base64 清洗和解码
+        clean_content = content.replace(' ', '').replace('\n', '')
+        if len(clean_content) % 4 != 0:
+            clean_content += '=' * (4 - len(clean_content) % 4)
+        decoded = base64.b64decode(clean_content).decode('utf-8', errors='ignore')
+        
+        # 递归处理解码后的内容
+        decoded_links = re.findall(r'(vmess|vless|ss|trojan|hysteria2?)://[a-zA-Z0-9\-\._~%!$&\'()*+,;=:@/?#]+', decoded)
+        for link in decoded_links:
+            if link.startswith("vmess://"):
+                new_link = rename_vmess(link)
+            else:
+                new_link = rename_url_struct(link)
+            processed_nodes.add(new_link)
+    except:
+        pass
+
+    return processed_nodes
 
 def main():
-    print("=== 任务开始 ===", flush=True)
+    print("=== 开始抓取与重命名 ===", flush=True)
     all_nodes = set()
 
     for url in URLS:
         content = get_content(url)
-        if not content:
-            continue
+        if not content: continue
         
-        # 1. 正则提取
-        nodes = re.findall(r'(vmess|vless|ss|trojan|hysteria2?)://[a-zA-Z0-9\-\._~%!$&\'()*+,;=:@/?#]+', content)
-        for node in nodes:
-            # 重新完整匹配链接
-            full_links = re.findall(r'((?:vmess|vless|ss|trojan|hysteria2?)://[a-zA-Z0-9\-\._~%!$&\'()*+,;=:@/?#]+)', content)
-            for link in full_links:
-                all_nodes.add(link)
-        
-        # 2. Base64 解码尝试
-        decoded = safe_base64_decode(content)
-        if decoded:
-            for line in decoded.splitlines():
-                line = line.strip()
-                if re.match(r'^(vmess|vless|ss|trojan|hysteria)://', line):
-                    all_nodes.add(line)
+        nodes = process_nodes(content)
+        if nodes:
+            print(f"    > 提取并重命名了 {len(nodes)} 个节点")
+            all_nodes.update(nodes)
 
-    print(f"=== 抓取完成 ===", flush=True)
-    print(f"共去重节点: {len(all_nodes)} 个", flush=True)
+    print(f"=== 完成 ===")
+    print(f"共获取 {len(all_nodes)} 个节点")
 
-    final_text = ""
-    if all_nodes:
-        final_text = "\n".join(all_nodes)
+    final_text = "\n".join(all_nodes)
     
+    # 保存明文
     with open("nodes_plain.txt", "w", encoding="utf-8") as f:
         f.write(final_text)
 
+    # 保存 Base64 订阅
     final_base64 = base64.b64encode(final_text.encode('utf-8')).decode('utf-8')
     with open("subscribe.txt", "w", encoding="utf-8") as f:
         f.write(final_base64)

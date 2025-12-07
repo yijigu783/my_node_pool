@@ -8,6 +8,10 @@ URLS = [
     "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/refs/heads/main/all_extracted_configs.txt",
     "https://raw.githubusercontent.com/anaer/Sub/main/clash.yaml",
     "https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub",
+    "https://raw.githubusercontent.com/free-nodes/v2rayfree/main/v2",
+    "https://raw.githubusercontent.com/free-nodes/clashfree/main/clash.yml",
+    "https://bulinkbulink.com/freefq/free/master/v2",
+    "https://raw.githubusercontent.com/chengaopan/AutoMergePublicNodes/master/list.txt",
     "https://raw.githubusercontent.com/crossxx-labs/free-proxy/main/clash/vmess.yml"
 ]
 

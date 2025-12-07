@@ -1,0 +1,43 @@
+name: Update Nodes
+
+# 触发条件
+on:
+  schedule:
+    # 国际标准时间 22:00 运行 (相当于北京时间早上 06:00)
+    - cron: '0 22 * * *'
+  # 允许手动点击按钮触发
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    # 必须配置权限，允许 Action 修改仓库代码
+    permissions:
+      contents: write
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+
+    - name: Run aggregator script
+      run: |
+        python main.py
+
+    - name: Commit and Push changes
+      run: |
+        git config --global user.name "GitHub Action"
+        git config --global user.email "action@github.com"
+        git add subscribe.txt nodes_plain.txt
+        # 如果没有变化（没抓到新节点），不报错
+        git commit -m "Auto update nodes" || exit 0
+        git push

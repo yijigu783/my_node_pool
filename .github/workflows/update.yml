@@ -37,7 +37,12 @@ jobs:
       run: |
         git config --global user.name "GitHub Action"
         git config --global user.email "action@github.com"
-        git add subscribe.txt nodes_plain.txt
-        # 如果没有变化（没抓到新节点），不报错
-        git commit -m "Auto update nodes" || exit 0
+        
+        # 【修改点】使用 git add . 添加目录下所有变动的文件
+        git add .
+        
+        # 提交变动，如果没变化则不报错
+        git commit -m "Auto update nodes: $(date)" || exit 0
+        
+        # 推送
         git push
